@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { ApproveActions, StatusBadge } from '../components/StatusBadge'
@@ -17,6 +18,7 @@ const emptyForm = {
 
 export default function Purchase() {
   const { profile, isAdmin } = useAuth()
+  const navigate = useNavigate()
   const [funds, setFunds] = useState([])
   const [rows, setRows] = useState([])
   const [form, setForm] = useState(emptyForm)
@@ -52,7 +54,7 @@ export default function Purchase() {
       department: form.department,
       unit_price: Number(form.unit_price),
       quantity: Number(form.quantity),
-      fund_id: form.fund_id ? Number(form.fund_id) : null,
+      fund_id: Number(form.fund_id),
       payment_method: form.payment_method,
       evidence_url: form.evidence_url || null,
       note: form.note || null,
@@ -62,9 +64,33 @@ export default function Purchase() {
     setForm(emptyForm)
   }
 
-  async function setStatus(id, status) {
-    const { error } = await supabase.from('purchases').update({ status, approved_by: profile.id }).eq('id', id)
-    if (error) alert(error.message)
+  // Approving a purchase creates the matching expense in "การเงิน" (Finance) so money is only
+  // ever deducted from one single place — the transactions ledger — then jumps there to show it.
+  async function setStatus(purchase, status) {
+    const { error } = await supabase
+      .from('purchases')
+      .update({ status, approved_by: profile.id })
+      .eq('id', purchase.id)
+    if (error) return alert(error.message)
+
+    if (status === 'ผ่าน') {
+      const { error: txError } = await supabase.from('transactions').insert({
+        fund_id: purchase.fund_id,
+        item: purchase.product_name,
+        type: 'รายจ่าย',
+        category: purchase.category,
+        department: purchase.department,
+        amount: Number(purchase.unit_price) * Number(purchase.quantity),
+        payment_method: purchase.payment_method,
+        requested_by: purchase.requested_by,
+        approved_by: profile.id,
+        status: 'ผ่าน',
+        evidence_url: purchase.evidence_url,
+        note: `จากรายการแจ้งเบิกพัสดุ: ${purchase.product_name}`,
+      })
+      if (txError) return alert('อนุมัติสำเร็จ แต่สร้างรายการในบัญชีไม่สำเร็จ: ' + txError.message)
+      navigate('/finance')
+    }
   }
 
   if (loading) return <p className="text-gray-500 text-sm">กำลังโหลดข้อมูล...</p>
@@ -72,8 +98,10 @@ export default function Purchase() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">รายการจัดซื้อ</h1>
-        <p className="text-sm text-gray-500">บันทึกของที่ซื้อ ระบบคำนวณยอดรวมให้อัตโนมัติ</p>
+        <h1 className="text-lg font-semibold text-ink">แจ้งเบิกพัสดุ</h1>
+        <p className="text-sm text-gray-500">
+          บันทึกของที่ต้องการซื้อ พออนุมัติแล้วระบบจะหักเงินและสร้างรายการในหน้า "บัญชี" ให้อัตโนมัติ
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="card grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -82,8 +110,8 @@ export default function Purchase() {
         <input placeholder="ฝ่าย" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
         <input type="number" step="0.01" placeholder="ราคาต่อชิ้น" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} required />
         <input type="number" placeholder="จำนวน" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required />
-        <select value={form.fund_id} onChange={(e) => setForm({ ...form, fund_id: e.target.value })}>
-          <option value="">หักจากก้อนเงิน (เลือก)</option>
+        <select value={form.fund_id} onChange={(e) => setForm({ ...form, fund_id: e.target.value })} required>
+          <option value="">หักจากก้อนเงิน (จำเป็นต้องเลือก)</option>
           {funds.map((f) => (
             <option key={f.id} value={f.id}>
               {f.name}
@@ -101,7 +129,7 @@ export default function Purchase() {
         <p className="text-sm text-gray-500 self-center">
           ยอดรวม: {(Number(form.unit_price || 0) * Number(form.quantity || 0)).toLocaleString()} ฿
         </p>
-        <button type="submit" className="btn btn-primary md:col-span-3">ยื่นบันทึกการซื้อ</button>
+        <button type="submit" className="btn btn-primary md:col-span-3">ยื่นแจ้งเบิกพัสดุ</button>
       </form>
 
       <div className="card overflow-x-auto">
@@ -126,7 +154,7 @@ export default function Purchase() {
                 <td>{r.requester?.full_name}</td>
                 <td>
                   {isAdmin ? (
-                    <ApproveActions status={r.status} onApprove={() => setStatus(r.id, 'ผ่าน')} onReject={() => setStatus(r.id, 'ไม่ผ่าน')} />
+                    <ApproveActions status={r.status} onApprove={() => setStatus(r, 'ผ่าน')} onReject={() => setStatus(r, 'ไม่ผ่าน')} />
                   ) : (
                     <StatusBadge status={r.status} />
                   )}
@@ -135,7 +163,7 @@ export default function Purchase() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center text-gray-400 py-6">ยังไม่มีรายการจัดซื้อ</td>
+                <td colSpan={6} className="text-center text-gray-400 py-6">ยังไม่มีรายการแจ้งเบิกพัสดุ</td>
               </tr>
             )}
           </tbody>
