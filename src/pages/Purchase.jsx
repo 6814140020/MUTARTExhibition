@@ -1,0 +1,146 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
+import { ApproveActions, StatusBadge } from '../components/StatusBadge'
+
+const emptyForm = {
+  product_name: '',
+  category: '',
+  department: '',
+  unit_price: '',
+  quantity: 1,
+  fund_id: '',
+  payment_method: 'โอนธนาคาร',
+  evidence_url: '',
+  note: '',
+}
+
+export default function Purchase() {
+  const { profile, isAdmin } = useAuth()
+  const [funds, setFunds] = useState([])
+  const [rows, setRows] = useState([])
+  const [form, setForm] = useState(emptyForm)
+  const [loading, setLoading] = useState(true)
+
+  async function loadAll() {
+    const [{ data: f }, { data: p }] = await Promise.all([
+      supabase.from('funds').select('*').order('id'),
+      supabase
+        .from('purchases')
+        .select('*, requester:requested_by(full_name)')
+        .order('created_at', { ascending: false }),
+    ])
+    setFunds(f || [])
+    setRows(p || [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    loadAll()
+    const channel = supabase
+      .channel('purchases-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, loadAll)
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [])
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const { error } = await supabase.from('purchases').insert({
+      product_name: form.product_name,
+      category: form.category,
+      department: form.department,
+      unit_price: Number(form.unit_price),
+      quantity: Number(form.quantity),
+      fund_id: form.fund_id ? Number(form.fund_id) : null,
+      payment_method: form.payment_method,
+      evidence_url: form.evidence_url || null,
+      note: form.note || null,
+      requested_by: profile.id,
+    })
+    if (error) return alert(error.message)
+    setForm(emptyForm)
+  }
+
+  async function setStatus(id, status) {
+    const { error } = await supabase.from('purchases').update({ status, approved_by: profile.id }).eq('id', id)
+    if (error) alert(error.message)
+  }
+
+  if (loading) return <p className="text-gray-500 text-sm">กำลังโหลดข้อมูล...</p>
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-lg font-semibold text-ink">รายการจัดซื้อ</h1>
+        <p className="text-sm text-gray-500">บันทึกของที่ซื้อ ระบบคำนวณยอดรวมให้อัตโนมัติ</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="card grid grid-cols-1 md:grid-cols-3 gap-3">
+        <input placeholder="ชื่อสินค้า" value={form.product_name} onChange={(e) => setForm({ ...form, product_name: e.target.value })} required />
+        <input placeholder="หมวดหมู่" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+        <input placeholder="ฝ่าย" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+        <input type="number" step="0.01" placeholder="ราคาต่อชิ้น" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} required />
+        <input type="number" placeholder="จำนวน" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required />
+        <select value={form.fund_id} onChange={(e) => setForm({ ...form, fund_id: e.target.value })}>
+          <option value="">หักจากก้อนเงิน (เลือก)</option>
+          {funds.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>
+          <option>โอนธนาคาร</option>
+          <option>เงินสด</option>
+          <option>พร้อมเพย์</option>
+          <option>เช็ค</option>
+        </select>
+        <input placeholder="ลิงก์ใบเสร็จ (ถ้ามี)" value={form.evidence_url} onChange={(e) => setForm({ ...form, evidence_url: e.target.value })} />
+        <input placeholder="หมายเหตุ" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+        <p className="text-sm text-gray-500 self-center">
+          ยอดรวม: {(Number(form.unit_price || 0) * Number(form.quantity || 0)).toLocaleString()} ฿
+        </p>
+        <button type="submit" className="btn btn-primary md:col-span-3">ยื่นบันทึกการซื้อ</button>
+      </form>
+
+      <div className="card overflow-x-auto">
+        <table>
+          <thead>
+            <tr>
+              <th>วันที่</th>
+              <th>สินค้า</th>
+              <th>จำนวน</th>
+              <th>ยอดรวม</th>
+              <th>ผู้ซื้อ</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="whitespace-nowrap">{new Date(r.created_at).toLocaleDateString('th-TH')}</td>
+                <td>{r.product_name}</td>
+                <td>{r.quantity}</td>
+                <td>{(Number(r.unit_price) * Number(r.quantity)).toLocaleString()} ฿</td>
+                <td>{r.requester?.full_name}</td>
+                <td>
+                  {isAdmin ? (
+                    <ApproveActions status={r.status} onApprove={() => setStatus(r.id, 'ผ่าน')} onReject={() => setStatus(r.id, 'ไม่ผ่าน')} />
+                  ) : (
+                    <StatusBadge status={r.status} />
+                  )}
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="text-center text-gray-400 py-6">ยังไม่มีรายการจัดซื้อ</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}

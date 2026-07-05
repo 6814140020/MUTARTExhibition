@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'IBM Plex Sans Thai', ui-sans-serif, system-ui, sans-serif;
+}
+
+.card {
+  @apply bg-white border border-gray-200 rounded-xl p-5;
+}
+
+.btn {
+  @apply px-4 py-2 rounded-lg text-sm font-medium transition-colors;
+}
+.btn-primary {
+  @apply bg-accent text-white hover:bg-emerald-800;
+}
+.btn-outline {
+  @apply border border-gray-300 text-ink hover:bg-gray-50;
+}
+
+.badge {
+  @apply px-2 py-0.5 rounded-full text-xs font-medium inline-block;
+}
+.badge-pending { @apply bg-amber-100 text-amber-800; }
+.badge-approved { @apply bg-emerald-100 text-emerald-800; }
+.badge-rejected { @apply bg-red-100 text-red-800; }
+
+input, select, textarea {
+  @apply border border-gray-300 rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent;
+}
+
+table { @apply w-full text-sm; }
+th { @apply text-left text-gray-500 font-medium py-2 border-b border-gray-200; }
+td { @apply py-2 border-b border-gray-100; }
