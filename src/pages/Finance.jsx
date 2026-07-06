@@ -145,7 +145,11 @@ export default function Finance() {
               <th>ก้อนเงิน</th>
               <th>ประเภท</th>
               <th>จำนวนเงิน</th>
+              <th>ฝ่าย</th>
               <th>ผู้ขอเบิก</th>
+              <th>ผู้อนุมัติ</th>
+              <th>หลักฐาน</th>
+              <th>หมายเหตุ</th>
               <th>สถานะ</th>
             </tr>
           </thead>
@@ -157,7 +161,24 @@ export default function Finance() {
                 <td>{funds.find((f) => f.id === r.fund_id)?.name}</td>
                 <td>{r.type}</td>
                 <td>{Number(r.amount).toLocaleString()} ฿</td>
+                <td>{r.department || '-'}</td>
                 <td>{r.requester?.full_name}</td>
+                <td>{r.approver?.full_name || '-'}</td>
+                <td>
+                  {r.evidence_url ? (
+                    <a
+                      href={r.evidence_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline hover:text-emerald-800"
+                    >
+                      เปิดดู
+                    </a>
+                  ) : (
+                    '-'
+                  )}
+                </td>
+                <td className="max-w-[160px] truncate" title={r.note || ''}>{r.note || '-'}</td>
                 <td>
                   {isAdmin ? (
                     <ApproveActions
@@ -175,7 +196,7 @@ export default function Finance() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center text-gray-400 py-6">
+                <td colSpan={11} className="text-center text-gray-400 py-6">
                   ยังไม่มีรายการ
                 </td>
               </tr>

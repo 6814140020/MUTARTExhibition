@@ -23,6 +23,7 @@ export default function Purchase() {
   const [rows, setRows] = useState([])
   const [form, setForm] = useState(emptyForm)
   const [loading, setLoading] = useState(true)
+  const [processingIds, setProcessingIds] = useState(new Set())
 
   async function loadAll() {
     const [{ data: f }, { data: p }] = await Promise.all([
@@ -66,30 +67,46 @@ export default function Purchase() {
 
   // Approving a purchase creates the matching expense in "การเงิน" (Finance) so money is only
   // ever deducted from one single place — the transactions ledger — then jumps there to show it.
+  // The .eq('status', 'รออนุมัติ') guard below makes this atomic: if the row was already approved
+  // by an earlier click (double-click, slow network, etc.), this update touches 0 rows and we
+  // skip creating a duplicate transaction — this is what was causing the double deduction.
   async function setStatus(purchase, status) {
-    const { error } = await supabase
-      .from('purchases')
-      .update({ status, approved_by: profile.id })
-      .eq('id', purchase.id)
-    if (error) return alert(error.message)
+    if (processingIds.has(purchase.id)) return
+    setProcessingIds((prev) => new Set(prev).add(purchase.id))
+    try {
+      const { data: updated, error } = await supabase
+        .from('purchases')
+        .update({ status, approved_by: profile.id })
+        .eq('id', purchase.id)
+        .eq('status', 'รออนุมัติ')
+        .select()
+      if (error) return alert(error.message)
+      if (!updated || updated.length === 0) return // already processed elsewhere — do nothing more
 
-    if (status === 'ผ่าน') {
-      const { error: txError } = await supabase.from('transactions').insert({
-        fund_id: purchase.fund_id,
-        item: purchase.product_name,
-        type: 'รายจ่าย',
-        category: purchase.category,
-        department: purchase.department,
-        amount: Number(purchase.unit_price) * Number(purchase.quantity),
-        payment_method: purchase.payment_method,
-        requested_by: purchase.requested_by,
-        approved_by: profile.id,
-        status: 'ผ่าน',
-        evidence_url: purchase.evidence_url,
-        note: `จากรายการแจ้งเบิกพัสดุ: ${purchase.product_name}`,
+      if (status === 'ผ่าน') {
+        const { error: txError } = await supabase.from('transactions').insert({
+          fund_id: purchase.fund_id,
+          item: purchase.product_name,
+          type: 'รายจ่าย',
+          category: purchase.category,
+          department: purchase.department,
+          amount: Number(purchase.unit_price) * Number(purchase.quantity),
+          payment_method: purchase.payment_method,
+          requested_by: purchase.requested_by,
+          approved_by: profile.id,
+          status: 'ผ่าน',
+          evidence_url: purchase.evidence_url,
+          note: `จากรายการแจ้งเบิกพัสดุ: ${purchase.product_name}`,
+        })
+        if (txError) return alert('อนุมัติสำเร็จ แต่สร้างรายการในบัญชีไม่สำเร็จ: ' + txError.message)
+        navigate('/finance')
+      }
+    } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(purchase.id)
+        return next
       })
-      if (txError) return alert('อนุมัติสำเร็จ แต่สร้างรายการในบัญชีไม่สำเร็จ: ' + txError.message)
-      navigate('/finance')
     }
   }
 
@@ -141,6 +158,7 @@ export default function Purchase() {
               <th>จำนวน</th>
               <th>ยอดรวม</th>
               <th>ผู้ซื้อ</th>
+              <th>หมายเหตุ</th>
               <th>สถานะ</th>
             </tr>
           </thead>
@@ -152,9 +170,15 @@ export default function Purchase() {
                 <td>{r.quantity}</td>
                 <td>{(Number(r.unit_price) * Number(r.quantity)).toLocaleString()} ฿</td>
                 <td>{r.requester?.full_name}</td>
+                <td className="max-w-[160px] truncate" title={r.note || ''}>{r.note || '-'}</td>
                 <td>
                   {isAdmin ? (
-                    <ApproveActions status={r.status} onApprove={() => setStatus(r, 'ผ่าน')} onReject={() => setStatus(r, 'ไม่ผ่าน')} />
+                    <ApproveActions
+                      status={r.status}
+                      disabled={processingIds.has(r.id)}
+                      onApprove={() => setStatus(r, 'ผ่าน')}
+                      onReject={() => setStatus(r, 'ไม่ผ่าน')}
+                    />
                   ) : (
                     <StatusBadge status={r.status} />
                   )}
@@ -163,7 +187,7 @@ export default function Purchase() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center text-gray-400 py-6">ยังไม่มีรายการแจ้งเบิกพัสดุ</td>
+                <td colSpan={7} className="text-center text-gray-400 py-6">ยังไม่มีรายการแจ้งเบิกพัสดุ</td>
               </tr>
             )}
           </tbody>
