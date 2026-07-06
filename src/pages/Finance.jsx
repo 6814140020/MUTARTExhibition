@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { uploadEvidence } from '../lib/uploadEvidence'
 import { useAuth } from '../contexts/AuthContext'
 import { ApproveActions } from '../components/StatusBadge'
 
@@ -11,7 +12,6 @@ const emptyForm = {
   department: '',
   amount: '',
   payment_method: 'โอนธนาคาร',
-  evidence_url: '',
   note: '',
 }
 
@@ -20,8 +20,10 @@ export default function Finance() {
   const [funds, setFunds] = useState([])
   const [rows, setRows] = useState([])
   const [form, setForm] = useState(emptyForm)
+  const [evidenceFile, setEvidenceFile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const fileInputRef = useRef(null)
 
   async function loadAll() {
     const [{ data: f }, { data: t }] = await Promise.all([
@@ -48,21 +50,29 @@ export default function Finance() {
   async function handleSubmit(e) {
     e.preventDefault()
     setSaving(true)
-    const { error } = await supabase.from('transactions').insert({
-      fund_id: Number(form.fund_id),
-      item: form.item,
-      type: form.type,
-      category: form.category,
-      department: form.department,
-      amount: Number(form.amount),
-      payment_method: form.payment_method,
-      evidence_url: form.evidence_url || null,
-      note: form.note || null,
-      requested_by: profile.id,
-    })
-    setSaving(false)
-    if (error) return alert(error.message)
-    setForm(emptyForm)
+    try {
+      const evidence_url = await uploadEvidence(evidenceFile, 'transactions')
+      const { error } = await supabase.from('transactions').insert({
+        fund_id: Number(form.fund_id),
+        item: form.item,
+        type: form.type,
+        category: form.category,
+        department: form.department,
+        amount: Number(form.amount),
+        payment_method: form.payment_method,
+        evidence_url,
+        note: form.note || null,
+        requested_by: profile.id,
+      })
+      if (error) return alert(error.message)
+      setForm(emptyForm)
+      setEvidenceFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch (err) {
+      alert('อัปโหลดรูปหลักฐานไม่สำเร็จ: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function setStatus(id, status) {
@@ -125,11 +135,16 @@ export default function Finance() {
           <option>พร้อมเพย์</option>
           <option>เช็ค</option>
         </select>
-        <input
-          placeholder="ลิงก์หลักฐาน (ถ้ามี)"
-          value={form.evidence_url}
-          onChange={(e) => setForm({ ...form, evidence_url: e.target.value })}
-        />
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(e) => setEvidenceFile(e.target.files[0] || null)}
+            className="text-sm file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:text-sm hover:file:bg-gray-200"
+          />
+          {evidenceFile && <p className="text-xs text-gray-400 mt-1 truncate">แนบแล้ว: {evidenceFile.name}</p>}
+        </div>
         <input placeholder="หมายเหตุ" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
         <button type="submit" disabled={saving} className="btn btn-primary md:col-span-3">
           {saving ? 'กำลังบันทึก...' : 'ยื่นขอเบิก/บันทึกรายการ'}

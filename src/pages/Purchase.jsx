@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { uploadEvidence } from '../lib/uploadEvidence'
 import { useAuth } from '../contexts/AuthContext'
 import { ApproveActions, StatusBadge } from '../components/StatusBadge'
 
@@ -12,7 +13,6 @@ const emptyForm = {
   quantity: 1,
   fund_id: '',
   payment_method: 'โอนธนาคาร',
-  evidence_url: '',
   note: '',
 }
 
@@ -22,8 +22,11 @@ export default function Purchase() {
   const [funds, setFunds] = useState([])
   const [rows, setRows] = useState([])
   const [form, setForm] = useState(emptyForm)
+  const [evidenceFile, setEvidenceFile] = useState(null)
+  const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [processingIds, setProcessingIds] = useState(new Set())
+  const fileInputRef = useRef(null)
 
   async function loadAll() {
     const [{ data: f }, { data: p }] = await Promise.all([
@@ -49,20 +52,30 @@ export default function Purchase() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    const { error } = await supabase.from('purchases').insert({
-      product_name: form.product_name,
-      category: form.category,
-      department: form.department,
-      unit_price: Number(form.unit_price),
-      quantity: Number(form.quantity),
-      fund_id: Number(form.fund_id),
-      payment_method: form.payment_method,
-      evidence_url: form.evidence_url || null,
-      note: form.note || null,
-      requested_by: profile.id,
-    })
-    if (error) return alert(error.message)
-    setForm(emptyForm)
+    setSaving(true)
+    try {
+      const evidence_url = await uploadEvidence(evidenceFile, 'purchases')
+      const { error } = await supabase.from('purchases').insert({
+        product_name: form.product_name,
+        category: form.category,
+        department: form.department,
+        unit_price: Number(form.unit_price),
+        quantity: Number(form.quantity),
+        fund_id: Number(form.fund_id),
+        payment_method: form.payment_method,
+        evidence_url,
+        note: form.note || null,
+        requested_by: profile.id,
+      })
+      if (error) return alert(error.message)
+      setForm(emptyForm)
+      setEvidenceFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch (err) {
+      alert('อัปโหลดรูปหลักฐานไม่สำเร็จ: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Approving a purchase creates the matching expense in "การเงิน" (Finance) so money is only
@@ -141,12 +154,23 @@ export default function Purchase() {
           <option>พร้อมเพย์</option>
           <option>เช็ค</option>
         </select>
-        <input placeholder="ลิงก์ใบเสร็จ (ถ้ามี)" value={form.evidence_url} onChange={(e) => setForm({ ...form, evidence_url: e.target.value })} />
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(e) => setEvidenceFile(e.target.files[0] || null)}
+            className="text-sm file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:text-sm hover:file:bg-gray-200"
+          />
+          {evidenceFile && <p className="text-xs text-gray-400 mt-1 truncate">แนบแล้ว: {evidenceFile.name}</p>}
+        </div>
         <input placeholder="หมายเหตุ" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
         <p className="text-sm text-gray-500 self-center">
           ยอดรวม: {(Number(form.unit_price || 0) * Number(form.quantity || 0)).toLocaleString()} ฿
         </p>
-        <button type="submit" className="btn btn-primary md:col-span-3">ยื่นแจ้งเบิกพัสดุ</button>
+        <button type="submit" disabled={saving} className="btn btn-primary md:col-span-3">
+          {saving ? 'กำลังบันทึก...' : 'ยื่นแจ้งเบิกพัสดุ'}
+        </button>
       </form>
 
       <div className="card overflow-x-auto">
@@ -158,6 +182,7 @@ export default function Purchase() {
               <th>จำนวน</th>
               <th>ยอดรวม</th>
               <th>ผู้ซื้อ</th>
+              <th>หลักฐาน</th>
               <th>หมายเหตุ</th>
               <th>สถานะ</th>
             </tr>
@@ -170,6 +195,20 @@ export default function Purchase() {
                 <td>{r.quantity}</td>
                 <td>{(Number(r.unit_price) * Number(r.quantity)).toLocaleString()} ฿</td>
                 <td>{r.requester?.full_name}</td>
+                <td>
+                  {r.evidence_url ? (
+                    <a
+                      href={r.evidence_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline hover:text-emerald-800"
+                    >
+                      เปิดดู
+                    </a>
+                  ) : (
+                    '-'
+                  )}
+                </td>
                 <td className="max-w-[160px] truncate" title={r.note || ''}>{r.note || '-'}</td>
                 <td>
                   {isAdmin ? (
@@ -187,7 +226,7 @@ export default function Purchase() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center text-gray-400 py-6">ยังไม่มีรายการแจ้งเบิกพัสดุ</td>
+                <td colSpan={8} className="text-center text-gray-400 py-6">ยังไม่มีรายการแจ้งเบิกพัสดุ</td>
               </tr>
             )}
           </tbody>
