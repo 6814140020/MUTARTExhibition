@@ -15,19 +15,16 @@ function fundStyle(name = '') {
 export default function Dashboard() {
   const [funds, setFunds] = useState([])
   const [transactions, setTransactions] = useState([])
-  const [purchases, setPurchases] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [{ data: f }, { data: t }, { data: p }] = await Promise.all([
+      const [{ data: f }, { data: t }] = await Promise.all([
         supabase.from('funds').select('*'),
         supabase.from('transactions').select('*').eq('status', 'ผ่าน'),
-        supabase.from('purchases').select('*').eq('status', 'ผ่าน'),
       ])
       setFunds(f || [])
       setTransactions(t || [])
-      setPurchases(p || [])
       setLoading(false)
     }
     load()
@@ -42,19 +39,17 @@ export default function Dashboard() {
     const expense = transactions
       .filter((t) => t.fund_id === fundId && t.type === 'รายจ่าย')
       .reduce((s, t) => s + Number(t.amount), 0)
-    const purchaseSpend = purchases
-      .filter((p) => p.fund_id === fundId)
-      .reduce((s, p) => s + Number(p.unit_price) * Number(p.quantity), 0)
-    const remaining = budget + income - expense - purchaseSpend
-    return { income, expense: expense + purchaseSpend, remaining }
+    const remaining = budget + income - expense
+    return { income, expense, remaining }
   }
 
   const byCategory = {}
-  ;[...transactions.filter((t) => t.type === 'รายจ่าย'), ...purchases].forEach((row) => {
-    const cat = row.category || 'ไม่ระบุหมวดหมู่'
-    const amt = row.amount !== undefined ? Number(row.amount) : Number(row.unit_price) * Number(row.quantity)
-    byCategory[cat] = (byCategory[cat] || 0) + amt
-  })
+  transactions
+    .filter((t) => t.type === 'รายจ่าย')
+    .forEach((row) => {
+      const cat = row.category || 'ไม่ระบุหมวดหมู่'
+      byCategory[cat] = (byCategory[cat] || 0) + Number(row.amount)
+    })
   const categoryData = Object.entries(byCategory).map(([name, value]) => ({ name, value }))
 
   return (
@@ -136,3 +131,4 @@ export default function Dashboard() {
     </div>
   )
 }
+ห
